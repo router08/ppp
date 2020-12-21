@@ -355,7 +355,7 @@ main(argc, argv)
      */
     if (!options_from_file(_PATH_SYSOPTIONS, !privileged, 0, 1)
 	|| !options_from_user()
-	|| !parse_args(argc-1, argv+1))
+	|| !parse_args(argc-1, argv+1)) //此处根据传入的参数，可能会对the_channel重新赋值
 	exit(EXIT_OPTION_ERROR);
     devnam_fixed = 1;		/* can no longer change device name */
 
@@ -524,11 +524,35 @@ main(argc, argv)
 	script_unsetenv("CONNECT_TIME");
 	script_unsetenv("BYTES_SENT");
 	script_unsetenv("BYTES_RCVD");
-
-	lcp_open(0);		/* Start protocol */
+	/* Start protocol,
+	 * 该函数调用有限状态机fsm_open,fsm_open函数中将callback指针指向了starting
+	 * starting函数即是lcp_starting,其中实现了一个OPEN事件，
+	 * 使得PPP状态从DEAD转变为ESTABLISHED
+	 * */
+	lcp_open(0);		
+	/* 该函数中将一个串口设备作为PPP的接口,并把状态转变为ESTABLISHED,
+	 * 然后调用lcp_lowerup(),该函数逻辑：
+	 *  >> 告诉上层,底层接口已经UP,
+	 *  >> 调用fsm_lowerup()发送configure-request消息(第一个协商报文发出)
+	 *	>> 将当前状态设置为REQUEST
+	 * */
 	start_link(0);
 	while (phase != PHASE_DEAD) {
+		/* 等待接收数据包的时间处理:
+		 * 	>> wait_input函数等待并判断超时
+		 * 	>> calltimeout函数超时处理
+		 * */
 	    handle_events();
+
+		/* 未超时且有数据包到达：
+		 * 	>> 判断包数据,丢弃所有不在LCP phase和不是OPENED状态的包,将protop指针指向当前协议input函数,即lcp_input
+		 * 	>> lcp_input函数调用fsm_input对报数据解析判断
+		 * 	>> 正常收到CONFACK消息,则调用fsm_rconack()函数,此函数中发送Configure-Ack消息,并将状态设置为OPENED
+		 * 	>> 将callback指针指向UP，即lcp_up,此函数中调用link_established()函数来进入认证的协商，或者如果没有认证则直接进入网络层协议
+		 *
+		 * link_established函数:
+		 * 	>> 选择使用认证方式:PAP/EAP/CHAP
+		 * */
 	    get_input();
 	    if (kill_link)
 		lcp_close(0, "User request");
@@ -556,7 +580,7 @@ main(argc, argv)
 	if (holdoff_hook)
 	    t = (*holdoff_hook)();
 	if (t > 0) {
-	    new_phase(PHASE_HOLDOFF);
+	    new_phase(PHASE_HOLDOFF)
 	    TIMEOUT(holdoff_end, NULL, t);
 	    do {
 		handle_events();
