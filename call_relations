@@ -6,3 +6,83 @@
 | lcp_echo_lowerup  |
 +-------------------+
 
+
+
+# 1. pppd程序接受数据过程 
+get_input() 
+read_packet (unsigned char *buf)  //get a PPP packet from the serial device
+ read(ppp_fd, buf, len); 
+ (*protp->input)(0, p, len);------->
+ lcp_input(unit, p, len) 
+ fsm_input(f, inpacket, l)
+
+# 2. pppd内核接受数据过程
+ppp_async.c:
+ppp_async_init() #初始化
+	tty_register_ldisc()   #向tty注册了行规程处理接口,也就是一组回调函数
+	ppp_asynctty_receive() #回调，当串口tty收到数据时,它就会回调ppp_ldisc的ppp_asynctty_receive
+		ppp_async_input() #把数据buffer转换成sk_buff,并放入接收队列ap->rqueue中
+tasklet(ppp_async_process) #专门处理接收队列ap->rqueue中的数据包,ppp_async_process一直挂在接收队列ap->rqueue上
+	ppp_input() #一旦被唤醒，ppp_async_process()就调用ppp_input函数让PPP协议处理模块处理该数据包
+				#ppp_input函数中，数据被分成两路，一路是控制协议数据包，放入pch->file.rqb队列，交给pppd处理。
+				#另外一路是用户数据包，经ppp_do_recv/ppp_receive_frame进行PPP处理之后，再由netif_rx提交给上层协议处理，最后经 socket传递到应用程序。
+
+ppp_asynctty_receive(struct tty_struct*tty, const unsigned char *buf, char *cflags, int count)
+ppp_async_input(ap, buf, cflags, count);
+ppp_async_process(unsigned long arg)
+ppp_input(struct ppp_channel *chan, structsk_buff *skb)
+{
+	if (!pch->ppp || proto >= 0xc000 ||proto == PPP_CCPFRAG) {
+		/*put it on the channel queue */
+		skb_queue_tail(&pch->file.rq, skb);   //是控制协议数据包，放入pch->file.rqb队列，交给pppd处理。
+		/*drop old frames if queue too long */
+		while(pch->file.rq.qlen > PPP_MAX_RQLEN
+				&& (skb =skb_dequeue(&pch->file.rq)))
+			kfree_skb(skb);
+		wake_up_interruptible(&pch->file.rwait);
+	} else {
+		ppp_do_recv(pch->ppp, skb, pch);  //进行PPP处理之后，再由netif_rx提交给上层协议处理
+	}
+}
+
+
+# 3. pppd程序发送数据过程 
+start_link(unit) 
+ lcp_lowerup(0); 
+ fsm_lowerup(f) 
+ fsm_sdata(f, code, id, data, datalen) 
+ output (int unit, unsigned char *p, int len) 
+ write(fd, p, len)
+
+  
+  get_input()
+  lcp_input(unit, p, len)
+  fsm_input(f, inpacket, l)
+  fsm_rconfreq(f, id, inp, len);
+  fsm_sdata(f, code, id, data, datalen) 
+  output (int unit, unsigned char *p, int len) 
+  write(fd, p, len)
+
+
+# 4. pppd内核发送数据过程
+make_ppp_unit() #函数调用
+	ioctrl(PPPIOCNEWUNIT) #创建一个网络接口(如ppp0),内核中的PPP协议模块在处理PPPIOCNEWUNIT时,调用register_netdev
+register_netdev()    #向内核注册ppp的网络接口,该网络接口的传输函数指向ppp_start_xmit
+	ppp_start_xmit() #当应用程序发送数据时,内核根据IP地址和路由表,找到ppp网络接口,然后调用ppp_start_xmit函数,此时控制就转移到PPP协议处理模块
+		ppp_xmit_process() #ppp_start_xmit调用函数ppp_xmit_process去发送队列中的所有数据包
+			ppp_send_frame()	#ppp_xmit_process又调用ppp_send_frame去发送单个数据包,
+				ppp_push() #ppp_send_frame根据设置,调用压缩等扩展处理之后,又经ppp_push调用pch->chan->ops->start_xmit发送数据包
+					pch->chan->ops->start_xmit() #就是具体的传输方式了,比如说对于串口发送方式,则是ppp_async.c:
+ 						ppp_asynctty_openi() #注册ppp_async_send函数
+							ppp_async_send() #经
+								ppp_async_push() #函数调用tty->driver->write
+									tty->driver->write() #把数据发送串口。
+
+ ppp_start_xmit(struct sk_buff *skb, structnet_device *dev)
+ 	ppp_xmit_process(struct ppp *ppp)
+ 		ppp_push(struct ppp *ppp)
+ 			pch->chan->ops->start_xmit(pch->chan,skb)
+				 ppp_async_send(struct ppp_channel *chan,struct sk_buff *skb)
+					 ppp_async_push(struct asyncppp *ap)
+						 tty->ops->write(tty, ap->optr,avail)
+

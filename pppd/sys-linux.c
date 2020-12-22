@@ -629,7 +629,7 @@ static int make_ppp_unit()
 {
 	int x, flags;
 
-	if (ppp_dev_fd >= 0) {
+	if (ppp_dev_fd >= 0) {   //如果已经打开过，先关闭
 		dbglog("in make_ppp_unit, already had /dev/ppp open?");
 		close(ppp_dev_fd);
 	}
@@ -638,11 +638,11 @@ static int make_ppp_unit()
 		fatal("Couldn't open /dev/ppp: %m");
 	flags = fcntl(ppp_dev_fd, F_GETFL);
 	if (flags == -1
-	    || fcntl(ppp_dev_fd, F_SETFL, flags | O_NONBLOCK) == -1)
+	    || fcntl(ppp_dev_fd, F_SETFL, flags | O_NONBLOCK) == -1)  //设置为非阻塞
 		warn("Couldn't set /dev/ppp to nonblock: %m");
 
-	ifunit = req_unit;
-	x = ioctl(ppp_dev_fd, PPPIOCNEWUNIT, &ifunit);
+	ifunit = req_unit;  //传入请求的unitnumber，可通过/etc/ppp/options配置
+	x = ioctl(ppp_dev_fd, PPPIOCNEWUNIT, &ifunit);  //请求建立一个新unit
 	if (x < 0 && req_unit >= 0 && errno == EEXIST) {
 		warn("Couldn't allocate PPP unit %d as it is already in use", req_unit);
 		ifunit = -1;
@@ -2903,18 +2903,19 @@ get_pty(master_fdp, slave_fdp, slave_name, uid)
  *
  * open_loopback - open the device we use for getting packets
  * in demand mode.  Under Linux, we use a pty master/slave pair.
+ *
  */
 int
 open_ppp_loopback(void)
 {
     int flags;
 
-    looped = 1;
+    looped = 1;  //设置全局变量looped为1，后面会用到
     if (new_style_driver) {
 	/* allocate ourselves a ppp unit */
-	if (make_ppp_unit() < 0)
+	if (make_ppp_unit() < 0)  //创建PPP网络接口
 	    die(1);
-	modify_flags(ppp_dev_fd, 0, SC_LOOP_TRAFFIC);
+	modify_flags(ppp_dev_fd, 0, SC_LOOP_TRAFFIC);  //通过ioctl设置SC_LOOP_TRAFFIC
 	set_kdebugflag(kdebugflag);
 	ppp_fd = -1;
 	return ppp_dev_fd;

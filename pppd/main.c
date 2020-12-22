@@ -338,12 +338,14 @@ main(argc, argv)
 
     /*
      * Initialize each protocol.
+	 * protocols[]是全局变量的协议数组
      */
     for (i = 0; (protp = protocols[i]) != NULL; ++i)
-        (*protp->init)(0);
+        (*protp->init)(0);    //初始化协议数组中所有协议
 
     /*
      * Initialize the default channel.
+	 * channel初始化,默认就是全局的tty_channel,里面包括很多TTY函数指针 
      */
     tty_init();
 
@@ -364,7 +366,7 @@ main(argc, argv)
      * and parse the tty's options file.
      */
     if (the_channel->process_extra_options)
-	(*the_channel->process_extra_options)();
+	(*the_channel->process_extra_options)();    //实际上是调用tty_process_extra_options解析TTY参数
 
     if (debug)
 	setlogmask(LOG_UPTO(LOG_DEBUG));
@@ -378,6 +380,7 @@ main(argc, argv)
 	exit(EXIT_NOT_ROOT);
     }
 
+	/* 检测/dev/ppp设备文件是否有效 */
     if (!ppp_available()) {
 	option_error("%s", no_ppp_msg);
 	exit(EXIT_NO_KERNEL_SUPPORT);
@@ -386,18 +389,18 @@ main(argc, argv)
     /*
      * Check that the options given are valid and consistent.
      */
-    check_options();
-    if (!sys_check_options())
+    check_options();    //检查选项参数
+    if (!sys_check_options())    //检测系统参数，比如内核是否支持Multilink等
 	exit(EXIT_OPTION_ERROR);
-    auth_check_options();
+    auth_check_options();    //检查认证相关的参数
 #ifdef HAVE_MULTILINK
     mp_check_options();
 #endif
     for (i = 0; (protp = protocols[i]) != NULL; ++i)
 	if (protp->check_options != NULL)
-	    (*protp->check_options)();
+	    (*protp->check_options)();    //检查每个控制协议的参数配置
     if (the_channel->check_options)
-	(*the_channel->check_options)();
+	(*the_channel->check_options)();    //实际上是调用tty_check_options检测TTY参数
 
 
     if (dump_options || dryrun) {
@@ -444,7 +447,7 @@ main(argc, argv)
      * and identify who is running us.
      */
     if (!nodetach && !updetach)
-	detach();
+	detach();     //默认放在后台以daemon执行，也可配置/etc/ppp/option中的nodetach参数放在前台执行
     p = getlogin();
     if (p == NULL) {
 	pw = getpwuid(uid);
@@ -470,12 +473,13 @@ main(argc, argv)
     /*
      * If we're doing dial-on-demand, set up the interface now.
      */
-    if (demand) {
+    if (demand) {    //以按需拨号方式运行，可配置
 	/*
 	 * Open the loopback channel and set it up to be the ppp interface.
+	 * PPP的按需拨号功能的实现
 	 */
 	fd_loop = open_ppp_loopback();
-	set_ifunit(1);
+	set_ifunit(1);    //设置IFNAME环境变量为接口名称如ppp0
 	/*
 	 * Configure the interface and mark it up, etc.
 	 */
