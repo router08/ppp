@@ -1743,24 +1743,26 @@ ip_demand_conf(u)
 
     if (wo->hisaddr == 0 && !noremoteip) {
 	/* make up an arbitrary address for the peer */
-	wo->hisaddr = htonl(0x0a707070 + ifunit);
+	wo->hisaddr = htonl(0x0a707070 + ifunit);  //对端地址
 	wo->accept_remote = 1;
     }
     if (wo->ouraddr == 0) {
 	/* make up an arbitrary address for us */
-	wo->ouraddr = htonl(0x0a404040 + ifunit);
+	wo->ouraddr = htonl(0x0a404040 + ifunit);  //本端地址
 	wo->accept_local = 1;
 	ask_for_local = 0;	/* don't tell the peer this address */
     }
+	/* 在pppN接口上配置本端地址和对端地址以及子网掩码 */
     if (!sifaddr(u, wo->ouraddr, wo->hisaddr, GetMask(wo->ouraddr)))
 	return 0;
     ipcp_script(_PATH_IPPREUP, 1);
+	/* 将pppN接口设置为UP,接口类型为点对点 */
     if (!sifup(u))
 	return 0;
     if (!sifnpmode(u, PPP_IP, NPMODE_QUEUE))
 	return 0;
     if (wo->default_route)
-	if (sifdefaultroute(u, wo->ouraddr, wo->hisaddr))
+	if (sifdefaultroute(u, wo->ouraddr, wo->hisaddr)) //设置pppN接口为默认网关接口
 	    default_route_set[u] = 1;
     if (wo->proxy_arp)
 	if (sifproxyarp(u, wo->hisaddr))
