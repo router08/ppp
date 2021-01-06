@@ -295,6 +295,19 @@ struct protent *protocols[] = {
     NULL
 };
 
+/*
+ * slave_fd:
+ * master_fd:
+ *
+ * ppp_fd:
+ * ppp_dev_fd:
+ *
+ * tty_disc:
+ * ppp_disc:
+ *
+ * fd_loop: 即是ppp_dev_fd
+ *
+ * */
 int
 main(argc, argv)
     int argc;
