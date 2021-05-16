@@ -39,7 +39,7 @@
  * AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
  * OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * Copyright (c) 1999-2004 Paul Mackerras. All rights reserved.
+ * Copyright (c) 1999-2020 Paul Mackerras. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -65,8 +65,6 @@
  * AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
  * OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-
-#define RCSID	"$Id: main.c,v 1.156 2008/06/23 11:47:18 paulus Exp $"
 
 #include <stdio.h>
 #include <ctype.h>
@@ -157,10 +155,10 @@ TDB_CONTEXT *pppdb;		/* database for storing status etc. */
 
 char db_key[32];
 
-int (*holdoff_hook) __P((void)) = NULL;
-int (*new_phase_hook) __P((int)) = NULL;
-void (*snoop_recv_hook) __P((unsigned char *p, int len)) = NULL;
-void (*snoop_send_hook) __P((unsigned char *p, int len)) = NULL;
+int (*holdoff_hook)(void) = NULL;
+int (*new_phase_hook)(int) = NULL;
+void (*snoop_recv_hook)(unsigned char *p, int len) = NULL;
+void (*snoop_send_hook)(unsigned char *p, int len) = NULL;
 
 static int conn_running;	/* we have a [dis]connector running */
 static int fd_loop;		/* fd for getting demand-dial packets */
@@ -216,7 +214,7 @@ bool bundle_terminating;
 struct subprocess {
     pid_t	pid;
     char	*prog;
-    void	(*done) __P((void *));
+    void	(*done)(void *);
     void	*arg;
     int		killable;
     struct subprocess *next;
@@ -226,46 +224,37 @@ static struct subprocess *children;
 
 /* Prototypes for procedures local to this file. */
 
-static void setup_signals __P((void));
-static void create_pidfile __P((int pid));
-static void create_linkpidfile __P((int pid));
-static void cleanup __P((void));
-static void get_input __P((void));
-static void calltimeout __P((void));
-static struct timeval *timeleft __P((struct timeval *));
-static void kill_my_pg __P((int));
-static void hup __P((int));
-static void term __P((int));
-static void chld __P((int));
-static void toggle_debug __P((int));
-static void open_ccp __P((int));
-static void bad_signal __P((int));
-static void holdoff_end __P((void *));
-static void forget_child __P((int pid, int status));
-static int reap_kids __P((void));
-static void childwait_end __P((void *));
+static void setup_signals(void);
+static void create_pidfile(int pid);
+static void create_linkpidfile(int pid);
+static void cleanup(void);
+static void get_input(void);
+static void calltimeout(void);
+static struct timeval *timeleft(struct timeval *);
+static void kill_my_pg(int);
+static void hup(int);
+static void term(int);
+static void chld(int);
+static void toggle_debug(int);
+static void open_ccp(int);
+static void bad_signal(int);
+static void holdoff_end(void *);
+static void forget_child(int pid, int status);
+static int reap_kids(void);
+static void childwait_end(void *);
 
 #ifdef USE_TDB
-static void update_db_entry __P((void));
-static void add_db_key __P((const char *));
-static void delete_db_key __P((const char *));
-static void cleanup_db __P((void));
+static void update_db_entry(void);
+static void add_db_key(const char *);
+static void delete_db_key(const char *);
+static void cleanup_db(void);
 #endif
 
-static void handle_events __P((void));
-void print_link_stats __P((void));
+static void handle_events(void);
+void print_link_stats(void);
 
-extern	char	*getlogin __P((void));
-int main __P((int, char *[]));
-
-#ifdef ultrix
-#undef	O_NONBLOCK
-#define	O_NONBLOCK	O_NDELAY
-#endif
-
-#ifdef ULTRIX
-#define setlogmask(x)
-#endif
+extern	char	*getlogin(void);
+int main(int, char *[]);
 
 /*
  * PPP Data Link Layer "protocol" table.
@@ -309,15 +298,16 @@ struct protent *protocols[] = {
  *
  * */
 int
-main(argc, argv)
-    int argc;
-    char *argv[];
+main(int argc, char *argv[])
 {
     int i, t;
     char *p;
     struct passwd *pw;
     struct protent *protp;
     char numbuf[16];
+
+    strlcpy(path_ipup, _PATH_IPUP, sizeof(path_ipup));
+    strlcpy(path_ipdown, _PATH_IPDOWN, sizeof(path_ipdown));
 
     link_stats_valid = 0;
     new_phase(PHASE_INITIALIZE);
@@ -635,7 +625,7 @@ main(argc, argv)
  * handle_events - wait for something to happen and respond to it.
  */
 static void
-handle_events()
+handle_events(void)
 {
     struct timeval timo;
     unsigned char buf[16];
@@ -683,7 +673,7 @@ handle_events()
  * setup_signals - initialize signal handling.
  */
 static void
-setup_signals()
+setup_signals(void)
 {
     struct sigaction sa;
 
@@ -775,8 +765,7 @@ setup_signals()
  * unit we are using.
  */
 void
-set_ifunit(iskey)
-    int iskey;
+set_ifunit(int iskey)
 {
     char ifkey[32];
 
@@ -798,7 +787,7 @@ set_ifunit(iskey)
  * detach - detach us from the controlling terminal.
  */
 void
-detach()
+detach(void)
 {
     int pid;
     char numbuf[16];
@@ -818,8 +807,7 @@ detach()
 	/* update pid files if they have been written already */
 	if (pidfilename[0])
 	    create_pidfile(pid);
-	if (linkpidfile[0])
-	    create_linkpidfile(pid);
+	create_linkpidfile(pid);
 	exit(0);		/* parent dies */
     }
     setsid();
@@ -843,7 +831,7 @@ detach()
  * reopen_log - (re)open our connection to syslog.
  */
 void
-reopen_log()
+reopen_log(void)
 {
     openlog("pppd", LOG_PID | LOG_NDELAY, LOG_PPP);
     setlogmask(LOG_UPTO(LOG_INFO));
@@ -853,8 +841,7 @@ reopen_log()
  * Create a file containing our process ID.
  */
 static void
-create_pidfile(pid)
-    int pid;
+create_pidfile(int pid)
 {
     FILE *pidfile;
 
@@ -870,8 +857,7 @@ create_pidfile(pid)
 }
 
 void
-create_linkpidfile(pid)
-    int pid;
+create_linkpidfile(int pid)
 {
     FILE *pidfile;
 
@@ -894,7 +880,7 @@ create_linkpidfile(pid)
 /*
  * remove_pidfile - remove our pid files
  */
-void remove_pidfiles()
+void remove_pidfiles(void)
 {
     if (pidfilename[0] != 0 && unlink(pidfilename) < 0 && errno != ENOENT)
 	warn("unable to delete pid file %s: %m", pidfilename);
@@ -908,8 +894,7 @@ void remove_pidfiles()
  * holdoff_end - called via a timeout when the holdoff period ends.
  */
 static void
-holdoff_end(arg)
-    void *arg;
+holdoff_end(void *arg)
 {
     new_phase(PHASE_DORMANT);
 }
@@ -1053,8 +1038,7 @@ struct protocol_list {
  * protocol_name - find a name for a PPP protocol.
  */
 const char *
-protocol_name(proto)
-    int proto;
+protocol_name(int proto)
 {
     struct protocol_list *lp;
 
@@ -1068,7 +1052,7 @@ protocol_name(proto)
  * get_input - called when incoming data is available.
  */
 static void
-get_input()
+get_input(void)
 {
     int len, i;
     u_char *p;
@@ -1160,10 +1144,7 @@ get_input()
  * itself), otherwise 0.
  */
 int
-ppp_send_config(unit, mtu, accm, pcomp, accomp)
-    int unit, mtu;
-    u_int32_t accm;
-    int pcomp, accomp;
+ppp_send_config(int unit, int mtu, u_int32_t accm, int pcomp, int accomp)
 {
 	int errs;
 
@@ -1181,10 +1162,7 @@ ppp_send_config(unit, mtu, accm, pcomp, accomp)
  * itself), otherwise 0.
  */
 int
-ppp_recv_config(unit, mru, accm, pcomp, accomp)
-    int unit, mru;
-    u_int32_t accm;
-    int pcomp, accomp;
+ppp_recv_config(int unit, int mru, u_int32_t accm, int pcomp, int accomp)
 {
 	int errs;
 
@@ -1199,8 +1177,7 @@ ppp_recv_config(unit, mru, accm, pcomp, accomp)
  * new_phase - signal the start of a new phase of pppd's operation.
  */
 void
-new_phase(p)
-    int p;
+new_phase(int p)
 {
     phase = p;
     if (new_phase_hook)
@@ -1212,8 +1189,7 @@ new_phase(p)
  * die - clean up state and exit with the specified status.
  */
 void
-die(status)
-    int status;
+die(int status)
 {
     if (!doing_multilink || multilink_master)
 	print_link_stats();
@@ -1228,7 +1204,7 @@ die(status)
  */
 /* ARGSUSED */
 static void
-cleanup()
+cleanup(void)
 {
     sys_cleanup();
 
@@ -1246,7 +1222,7 @@ cleanup()
 }
 
 void
-print_link_stats()
+print_link_stats(void)
 {
     /*
      * Print connect time and statistics.
@@ -1264,8 +1240,7 @@ print_link_stats()
  * reset_link_stats - "reset" stats when link goes up.
  */
 void
-reset_link_stats(u)
-    int u;
+reset_link_stats(int u)
 {
     if (!get_ppp_stats(u, &old_link_stats))
 	return;
@@ -1276,8 +1251,7 @@ reset_link_stats(u)
  * update_link_stats - get stats at link termination.
  */
 void
-update_link_stats(u)
-    int u;
+update_link_stats(int u)
 {
     struct timeval now;
     char numbuf[32];
@@ -1305,7 +1279,7 @@ update_link_stats(u)
 struct	callout {
     struct timeval	c_time;		/* time at which to call routine */
     void		*c_arg;		/* argument to routine */
-    void		(*c_func) __P((void *)); /* routine */
+    void		(*c_func)(void *); /* routine */
     struct		callout *c_next;
 };
 
@@ -1316,10 +1290,7 @@ static struct timeval timenow;		/* Current time */
  * timeout - Schedule a timeout.
  */
 void
-timeout(func, arg, secs, usecs)
-    void (*func) __P((void *));
-    void *arg;
-    int secs, usecs;
+timeout(void (*func)(void *), void *arg, int secs, int usecs)
 {
     struct callout *newp, *p, **pp;
 
@@ -1355,9 +1326,7 @@ timeout(func, arg, secs, usecs)
  * untimeout - Unschedule a timeout.
  */
 void
-untimeout(func, arg)
-    void (*func) __P((void *));
-    void *arg;
+untimeout(void (*func)(void *), void *arg)
 {
     struct callout **copp, *freep;
 
@@ -1377,7 +1346,7 @@ untimeout(func, arg)
  * calltimeout - Call any timeout routines which are now due.
  */
 static void
-calltimeout()
+calltimeout(void)
 {
     struct callout *p;
 
@@ -1403,8 +1372,7 @@ calltimeout()
  * timeleft - return the length of time until the next timeout is due.
  */
 static struct timeval *
-timeleft(tvp)
-    struct timeval *tvp;
+timeleft(struct timeval *tvp)
 {
     if (callout == NULL)
 	return NULL;
@@ -1428,8 +1396,7 @@ timeleft(tvp)
  * We assume that sig is currently blocked.
  */
 static void
-kill_my_pg(sig)
-    int sig;
+kill_my_pg(int sig)
 {
     struct sigaction act, oldact;
     struct subprocess *chp;
@@ -1475,8 +1442,7 @@ kill_my_pg(sig)
  * signal, we just take the link down.
  */
 static void
-hup(sig)
-    int sig;
+hup(int sig)
 {
     /* can't log a message here, it can deadlock */
     got_sighup = 1;
@@ -1496,8 +1462,7 @@ hup(sig)
  */
 /*ARGSUSED*/
 static void
-term(sig)
-    int sig;
+term(int sig)
 {
     /* can't log a message here, it can deadlock */
     got_sigterm = sig;
@@ -1515,8 +1480,7 @@ term(sig)
  * Sets a flag so we will call reap_kids in the mainline.
  */
 static void
-chld(sig)
-    int sig;
+chld(int sig)
 {
     got_sigchld = 1;
     if (waiting)
@@ -1531,8 +1495,7 @@ chld(sig)
  */
 /*ARGSUSED*/
 static void
-toggle_debug(sig)
-    int sig;
+toggle_debug(int sig)
 {
     debug = !debug;
     if (debug) {
@@ -1550,8 +1513,7 @@ toggle_debug(sig)
  */
 /*ARGSUSED*/
 static void
-open_ccp(sig)
-    int sig;
+open_ccp(int sig)
 {
     got_sigusr2 = 1;
     if (waiting)
@@ -1563,8 +1525,7 @@ open_ccp(sig)
  * bad_signal - We've caught a fatal signal.  Clean up state and exit.
  */
 static void
-bad_signal(sig)
-    int sig;
+bad_signal(int sig)
 {
     static int crashed = 0;
 
@@ -1665,9 +1626,7 @@ safe_fork(int infd, int outfd, int errfd)
 }
 
 static bool
-add_script_env(pos, newstring)
-    int pos;
-    char *newstring;
+add_script_env(int pos, char *newstring)
 {
     if (pos + 1 >= s_env_nalloc) {
 	int new_n = pos + 17;
@@ -1685,8 +1644,7 @@ add_script_env(pos, newstring)
 }
 
 static void
-remove_script_env(pos)
-    int pos;
+remove_script_env(int pos)
 {
     free(script_env[pos] - 1);
     while ((script_env[pos] = script_env[pos + 1]) != NULL)
@@ -1698,7 +1656,7 @@ remove_script_env(pos)
  * and update the system environment.
  */
 static void
-update_system_environment()
+update_system_environment(void)
 {
     struct userenv *uep;
 
@@ -1716,10 +1674,7 @@ update_system_environment()
  * stderr gets connected to the log fd or to the _PATH_CONNERRS file.
  */
 int
-device_script(program, in, out, dont_wait)
-    char *program;
-    int in, out;
-    int dont_wait;
+device_script(char *program, int in, int out, int dont_wait)
 {
     int pid;
     int status = -1;
@@ -1728,7 +1683,7 @@ device_script(program, in, out, dont_wait)
     if (log_to_fd >= 0)
 	errfd = log_to_fd;
     else
-	errfd = open(_PATH_CONNERRS, O_WRONLY | O_APPEND | O_CREAT, 0600);
+	errfd = open(_PATH_CONNERRS, O_WRONLY | O_APPEND | O_CREAT, 0644);
 
     ++conn_running;
     pid = safe_fork(in, out, errfd);
@@ -1781,7 +1736,7 @@ device_script(program, in, out, dont_wait)
  * script_unsetenv() safely after this routine is run.
  */
 static void
-update_script_environment()
+update_script_environment(void)
 {
     struct userenv *uep;
 
@@ -1822,13 +1777,7 @@ update_script_environment()
  * reap_kids) iff the return value is > 0.
  */
 pid_t
-run_program(prog, args, must_exist, done, arg, wait)
-    char *prog;
-    char **args;
-    int must_exist;
-    void (*done) __P((void *));
-    void *arg;
-    int wait;
+run_program(char *prog, char **args, int must_exist, void (*done)(void *), void *arg, int wait)
 {
     int pid, status;
     struct stat sbuf;
@@ -1899,12 +1848,7 @@ run_program(prog, args, must_exist, done, arg, wait)
  * to use.
  */
 void
-record_child(pid, prog, done, arg, killable)
-    int pid;
-    char *prog;
-    void (*done) __P((void *));
-    void *arg;
-    int killable;
+record_child(int pid, char *prog, void (*done)(void *), void *arg, int killable)
 {
     struct subprocess *chp;
 
@@ -1929,8 +1873,7 @@ record_child(pid, prog, done, arg, killable)
  * exit, send them all a SIGTERM.
  */
 static void
-childwait_end(arg)
-    void *arg;
+childwait_end(void *arg)
 {
     struct subprocess *chp;
 
@@ -1946,8 +1889,7 @@ childwait_end(arg)
  * forget_child - clean up after a dead child
  */
 static void
-forget_child(pid, status)
-    int pid, status;
+forget_child(int pid, int status)
 {
     struct subprocess *chp, **prevp;
 
@@ -1976,7 +1918,7 @@ forget_child(pid, status)
  * and log a message for abnormal terminations.
  */
 static int
-reap_kids()
+reap_kids(void)
 {
     int pid, status;
 
@@ -1998,10 +1940,7 @@ reap_kids()
  * add_notifier - add a new function to be called when something happens.
  */
 void
-add_notifier(notif, func, arg)
-    struct notifier **notif;
-    notify_func func;
-    void *arg;
+add_notifier(struct notifier **notif, notify_func func, void *arg)
 {
     struct notifier *np;
 
@@ -2019,10 +1958,7 @@ add_notifier(notif, func, arg)
  * be called when something happens.
  */
 void
-remove_notifier(notif, func, arg)
-    struct notifier **notif;
-    notify_func func;
-    void *arg;
+remove_notifier(struct notifier **notif, notify_func func, void *arg)
 {
     struct notifier *np;
 
@@ -2039,9 +1975,7 @@ remove_notifier(notif, func, arg)
  * notify - call a set of functions registered with add_notifier.
  */
 void
-notify(notif, val)
-    struct notifier *notif;
-    int val;
+notify(struct notifier *notif, int val)
 {
     struct notifier *np;
 
@@ -2055,8 +1989,7 @@ notify(notif, val)
  * novm - log an error message saying we ran out of memory, and die.
  */
 void
-novm(msg)
-    char *msg;
+novm(char *msg)
 {
     fatal("Virtual memory exhausted allocating %s\n", msg);
 }
@@ -2066,9 +1999,7 @@ novm(msg)
  * for scripts that we run (e.g. ip-up, auth-up, etc.)
  */
 void
-script_setenv(var, value, iskey)
-    char *var, *value;
-    int iskey;
+script_setenv(char *var, char *value, int iskey)
 {
     size_t varl = strlen(var);
     size_t vl = varl + strlen(value) + 2;
@@ -2129,8 +2060,7 @@ script_setenv(var, value, iskey)
  * for scripts.
  */
 void
-script_unsetenv(var)
-    char *var;
+script_unsetenv(char *var)
 {
     int vl = strlen(var);
     int i;
@@ -2164,7 +2094,7 @@ script_unsetenv(var)
  * lock_db - get an exclusive lock on the TDB database.
  * Used to ensure atomicity of various lookup/modify operations.
  */
-void lock_db()
+void lock_db(void)
 {
 #ifdef USE_TDB
 	TDB_DATA key;
@@ -2178,7 +2108,7 @@ void lock_db()
 /*
  * unlock_db - remove the exclusive lock obtained by lock_db.
  */
-void unlock_db()
+void unlock_db(void)
 {
 #ifdef USE_TDB
 	TDB_DATA key;
@@ -2194,7 +2124,7 @@ void unlock_db()
  * update_db_entry - update our entry in the database.
  */
 static void
-update_db_entry()
+update_db_entry(void)
 {
     TDB_DATA key, dbuf;
     int vlen, i;
@@ -2228,8 +2158,7 @@ update_db_entry()
  * add_db_key - add a key that we can use to look up our database entry.
  */
 static void
-add_db_key(str)
-    const char *str;
+add_db_key(const char *str)
 {
     TDB_DATA key, dbuf;
 
@@ -2245,8 +2174,7 @@ add_db_key(str)
  * delete_db_key - delete a key for looking up our database entry.
  */
 static void
-delete_db_key(str)
-    const char *str;
+delete_db_key(const char *str)
 {
     TDB_DATA key;
 
@@ -2259,7 +2187,7 @@ delete_db_key(str)
  * cleanup_db - delete all the entries we put in the database.
  */
 static void
-cleanup_db()
+cleanup_db(void)
 {
     TDB_DATA key;
     int i;

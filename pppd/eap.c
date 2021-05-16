@@ -48,12 +48,6 @@
  * Implemented EAP-TLS authentication
  */
 
-#define RCSID	"$Id: eap.c,v 1.4 2004/11/09 22:39:25 paulus Exp $"
-
-/*
- * TODO:
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -84,6 +78,13 @@
 #ifdef USE_EAPTLS
 #include "eap-tls.h"
 #endif /* USE_EAPTLS */
+
+#ifdef CHAPMS
+#include "chap_ms.h"
+#include "chap-new.h"
+
+extern int chapms_strip_domain;
+#endif /* CHAPMS */
 
 eap_state eap_states[NUM_PPP];		/* EAP state; one for each unit */
 #ifdef USE_SRP
@@ -118,13 +119,13 @@ static option_t eap_option_list[] = {
 /*
  * Protocol entry points.
  */
-static void eap_init __P((int unit));
-static void eap_input __P((int unit, u_char *inp, int inlen));
-static void eap_protrej __P((int unit));
-static void eap_lowerup __P((int unit));
-static void eap_lowerdown __P((int unit));
-static int  eap_printpkt __P((u_char *inp, int inlen,
-    void (*)(void *arg, char *fmt, ...), void *arg));
+static void eap_init (int unit);
+static void eap_input (int unit, u_char *inp, int inlen);
+static void eap_protrej (int unit);
+static void eap_lowerup (int unit);
+static void eap_lowerdown (int unit);
+static int  eap_printpkt (u_char *inp, int inlen,
+    void (*)(void *arg, char *fmt, ...), void *arg);
 
 struct protent eap_protent = {
 	PPP_EAP,		/* protocol number */
@@ -146,6 +147,7 @@ struct protent eap_protent = {
 	NULL			/* say whether to bring up link for this pkt */
 };
 
+#ifdef USE_SRP
 /*
  * A well-known 2048 bit modulus.
  */
@@ -183,16 +185,16 @@ static const u_char wkmodulus[] = {
 	0x9B, 0x65, 0xE3, 0x72, 0xFC, 0xD6, 0x8E, 0xF2,
 	0x0F, 0xA7, 0x11, 0x1F, 0x9E, 0x4A, 0xFF, 0x73
 };
+#endif /* USE_SRP */
 
 /* Local forward declarations. */
-static void eap_server_timeout __P((void *arg));
+static void eap_server_timeout (void *arg);
 
 /*
  * Convert EAP state code to printable string for debug.
  */
 static const char *
-eap_state_name(esc)
-enum eap_state_code esc;
+eap_state_name(enum eap_state_code esc)
 {
 	static const char *state_names[] = { EAP_STATES };
 
@@ -204,8 +206,7 @@ enum eap_state_code esc;
  * called once by main() during start-up.
  */
 static void
-eap_init(unit)
-int unit;
+eap_init(int unit)
 {
 	eap_state *esp = &eap_states[unit];
 
@@ -219,6 +220,10 @@ int unit;
 #ifdef USE_EAPTLS
 	esp->es_client.ea_using_eaptls = 0;
 #endif /* USE_EAPTLS */
+#ifdef CHAPMS
+	esp->es_client.digest = chap_find_digest(CHAP_MICROSOFT_V2);
+	esp->es_server.digest = chap_find_digest(CHAP_MICROSOFT_V2);
+#endif
 }
 
 /*
@@ -226,8 +231,7 @@ int unit;
  * Request messages.
  */
 static void
-eap_client_timeout(arg)
-void *arg;
+eap_client_timeout(void *arg)
 {
 	eap_state *esp = (eap_state *) arg;
 
@@ -246,9 +250,7 @@ void *arg;
  * after eap_lowerup.
  */
 void
-eap_authwithpeer(unit, localname)
-int unit;
-char *localname;
+eap_authwithpeer(int unit, char *localname)
 {
 	eap_state *esp = &eap_states[unit];
 
@@ -272,8 +274,7 @@ char *localname;
  * (Server operation)
  */
 static void
-eap_send_failure(esp)
-eap_state *esp;
+eap_send_failure(eap_state *esp)
 {
 	u_char *outp;
 
@@ -297,8 +298,7 @@ eap_state *esp;
  * (Server operation)
  */
 static void
-eap_send_success(esp)
-eap_state *esp;
+eap_send_success(eap_state *esp)
 {
 	u_char *outp;
 
@@ -352,11 +352,7 @@ struct b64state {
 };
 
 static int
-b64enc(bs, inp, inlen, outp)
-struct b64state *bs;
-u_char *inp;
-int inlen;
-u_char *outp;
+b64enc(struct b64state *bs, u_char *inp, int inlen, u_char *outp)
 {
 	int outlen = 0;
 
@@ -378,9 +374,7 @@ u_char *outp;
 }
 
 static int
-b64flush(bs, outp)
-struct b64state *bs;
-u_char *outp;
+b64flush(struct b64state *bs, u_char *outp)
 {
 	int outlen = 0;
 
@@ -400,11 +394,7 @@ u_char *outp;
 }
 
 static int
-b64dec(bs, inp, inlen, outp)
-struct b64state *bs;
-u_char *inp;
-int inlen;
-u_char *outp;
+b64dec(struct b64state *bs, u_char *inp, int inlen, u_char *outp)
 {
 	int outlen = 0;
 	char *cp;
@@ -432,9 +422,7 @@ u_char *outp;
  * 0 for success and non-zero for failure.
  */
 static void
-eap_figure_next_state(esp, status)
-eap_state *esp;
-int status;
+eap_figure_next_state(eap_state *esp, int status)
 {
 #ifdef USE_SRP
 	unsigned char secbuf[MAXWORDLEN], clear[8], *sp, *dp;
@@ -706,6 +694,9 @@ int status;
 		}
 		break;
 
+#ifdef CHAPMS
+	case eapMSCHAPv2Chall:
+#endif
 	case eapMD5Chall:
 		if (status != 0) {
 			esp->es_server.ea_state = eapBadAuth;
@@ -726,13 +717,82 @@ int status;
 #endif /* USE_EAPTLS */
 }
 
+#if CHAPMS
+/*
+ * eap_chap_verify_response - check whether the peer's response matches
+ * what we think it should be.  Returns 1 if it does (authentication
+ * succeeded), or 0 if it doesn't.
+ */
+static int
+eap_chap_verify_response(char *name, char *ourname, int id,
+			 struct chap_digest_type *digest,
+			 unsigned char *challenge, unsigned char *response,
+			 char *message, int message_space)
+{
+	int ok;
+	unsigned char secret[MAXSECRETLEN];
+	int secret_len;
+
+	/* Get the secret that the peer is supposed to know */
+	if (!get_secret(0, name, ourname, (char *)secret, &secret_len, 1)) {
+		error("No CHAP secret found for authenticating %q", name);
+		return 0;
+	}
+
+	ok = digest->verify_response(id, name, secret, secret_len, challenge,
+				     response, message, message_space);
+	memset(secret, 0, sizeof(secret));
+
+	return ok;
+}
+
+/*
+ * Format and send an CHAPV2-Success/Failure EAP Request message.
+ */
+static void
+eap_chapms2_send_request(eap_state *esp, u_char id,
+			 u_char opcode, u_char chapid,
+			 char *message, int message_len)
+{
+	u_char *outp;
+	int msglen;
+
+	outp = outpacket_buf;
+
+	MAKEHEADER(outp, PPP_EAP);
+
+	msglen = EAP_HEADERLEN + 5 * sizeof (u_char);
+	msglen += message_len;
+
+	PUTCHAR(EAP_REQUEST, outp);
+	PUTCHAR(id, outp);
+	PUTSHORT(msglen, outp);
+	PUTCHAR(EAPT_MSCHAPV2, outp);
+	PUTCHAR(opcode, outp);
+	PUTCHAR(chapid, outp);
+	/* MS len */
+	PUTSHORT(msglen - 5, outp);
+	BCOPY(message, outp, message_len);
+
+	output(esp->es_unit, outpacket_buf, PPP_HDRLEN + msglen);
+
+	if (opcode == CHAP_SUCCESS) {
+		auth_peer_success(esp->es_unit, PPP_EAP, 0,
+				esp->es_server.ea_peer, esp->es_server.ea_peerlen);
+	}
+	else {
+		esp->es_server.ea_state = eapBadAuth;
+		auth_peer_fail(esp->es_unit, PPP_EAP);
+	}
+}
+#endif /* CHAPMS */
+
 /*
  * Format an EAP Request message and send it to the peer.  Message
  * type depends on current state.  (Server operation)
  */
 static void
-eap_send_request(esp)
-eap_state *esp;
+eap_send_request(eap_state *esp)
 {
 	u_char *outp;
 	u_char *lenloc;
@@ -811,6 +871,29 @@ eap_state *esp;
 		BCOPY(esp->es_server.ea_name, outp, esp->es_server.ea_namelen);
 		INCPTR(esp->es_server.ea_namelen, outp);
 		break;
+
+#ifdef CHAPMS
+	case eapMSCHAPv2Chall:
+		esp->es_server.digest->generate_challenge(esp->es_challenge);
+		challen = esp->es_challenge[0];
+		esp->es_challen = challen;
+
+		PUTCHAR(EAPT_MSCHAPV2, outp);
+		PUTCHAR(CHAP_CHALLENGE, outp);
+		PUTCHAR(esp->es_server.ea_id, outp);
+		/* MS len */
+		PUTSHORT(5 + challen +
+				esp->es_server.ea_namelen,
+				outp);
+		/* challen + challenge */
+		BCOPY(esp->es_challenge, outp, challen+1);
+		INCPTR(challen+1, outp);
+		BCOPY(esp->es_server.ea_name,
+				outp,
+				esp->es_server.ea_namelen);
+		INCPTR(esp->es_server.ea_namelen, outp);
+		break;
+#endif /* CHAPMS */
 
 #ifdef USE_EAPTLS
 	case eapTlsStart:
@@ -989,9 +1072,7 @@ eap_state *esp;
  * after eap_lowerup.
  */
 void
-eap_authpeer(unit, localname)
-int unit;
-char *localname;
+eap_authpeer(int unit, char *localname)
 {
 	eap_state *esp = &eap_states[unit];
 
@@ -1019,8 +1100,7 @@ char *localname;
  * expired.
  */
 static void
-eap_server_timeout(arg)
-void *arg;
+eap_server_timeout(void *arg)
 {
 #ifdef USE_EAPTLS
 	u_char *outp;
@@ -1083,8 +1163,7 @@ void *arg;
  * will restart the timer.  If it fails, then the link is dropped.
  */
 static void
-eap_rechallenge(arg)
-void *arg;
+eap_rechallenge(void *arg)
 {
 	eap_state *esp = (eap_state *)arg;
 
@@ -1100,8 +1179,7 @@ void *arg;
 }
 
 static void
-srp_lwrechallenge(arg)
-void *arg;
+srp_lwrechallenge(void *arg)
 {
 	eap_state *esp = (eap_state *)arg;
 
@@ -1124,8 +1202,7 @@ void *arg;
  * thing.
  */
 static void
-eap_lowerup(unit)
-int unit;
+eap_lowerup(int unit)
 {
 	eap_state *esp = &eap_states[unit];
 
@@ -1148,8 +1225,7 @@ int unit;
  * Cancel all timeouts and return to initial state.
  */
 static void
-eap_lowerdown(unit)
-int unit;
+eap_lowerdown(int unit)
 {
 	eap_state *esp = &eap_states[unit];
 
@@ -1183,8 +1259,7 @@ int unit;
  * failure.
  */
 static void
-eap_protrej(unit)
-int unit;
+eap_protrej(int unit)
 {
 	eap_state *esp = &eap_states[unit];
 
@@ -1203,12 +1278,8 @@ int unit;
  * Format and send a regular EAP Response message.
  */
 static void
-eap_send_response(esp, id, typenum, str, lenstr)
-eap_state *esp;
-u_char id;
-u_char typenum;
-u_char *str;
-int lenstr;
+eap_send_response(eap_state *esp, u_char id, u_char typenum,
+		  u_char *str, int lenstr)
 {
 	u_char *outp;
 	int msglen;
@@ -1234,12 +1305,8 @@ int lenstr;
  * Format and send an MD5-Challenge EAP Response message.
  */
 static void
-eap_chap_response(esp, id, hash, name, namelen)
-eap_state *esp;
-u_char id;
-u_char *hash;
-char *name;
-int namelen;
+eap_chap_response(eap_state *esp, u_char id, u_char *hash,
+		  char *name, int namelen)
 {
 	u_char *outp;
 	int msglen;
@@ -1270,12 +1337,8 @@ int namelen;
  * Format and send a SRP EAP Response message.
  */
 static void
-eap_srp_response(esp, id, subtypenum, str, lenstr)
-eap_state *esp;
-u_char id;
-u_char subtypenum;
-u_char *str;
-int lenstr;
+eap_srp_response(eap_state *esp, u_char id, u_char subtypenum,
+		 u_char *str, int lenstr)
 {
 	u_char *outp;
 	int msglen;
@@ -1302,11 +1365,7 @@ int lenstr;
  * Format and send a SRP EAP Client Validator Response message.
  */
 static void
-eap_srpval_response(esp, id, flags, str)
-eap_state *esp;
-u_char id;
-u_int32_t flags;
-u_char *str;
+eap_srpval_response(eap_state *esp, u_char id, u_int32_t flags, u_char *str)
 {
 	u_char *outp;
 	int msglen;
@@ -1335,9 +1394,7 @@ u_char *str;
  * Send an EAP-TLS response message with tls data
  */
 static void
-eap_tls_response(esp, id)
-eap_state *esp;
-u_char id;
+eap_tls_response(eap_state *esp, u_char id)
 {
 	u_char *outp;
 	int outlen;
@@ -1374,9 +1431,7 @@ u_char id;
  * Send an EAP-TLS ack
  */
 static void
-eap_tls_sendack(esp, id)
-eap_state *esp;
-u_char id;
+eap_tls_sendack(eap_state *esp, u_char id)
 {
 	u_char *outp;
 	int outlen;
@@ -1404,10 +1459,7 @@ u_char id;
 #endif /* USE_EAPTLS */
 
 static void
-eap_send_nak(esp, id, type)
-eap_state *esp;
-u_char id;
-u_char type;
+eap_send_nak(eap_state *esp, u_char id, u_char type)
 {
 	u_char *outp;
 	int msglen;
@@ -1429,7 +1481,7 @@ u_char type;
 
 #ifdef USE_SRP
 static char *
-name_of_pn_file()
+name_of_pn_file(void)
 {
 	char *user, *path, *file;
 	struct passwd *pw;
@@ -1455,8 +1507,7 @@ name_of_pn_file()
 }
 
 static int
-open_pn_file(modebits)
-mode_t modebits;
+open_pn_file(mode_t modebits)
 {
 	char *path;
 	int fd, err;
@@ -1471,7 +1522,7 @@ mode_t modebits;
 }
 
 static void
-remove_pn_file()
+remove_pn_file(void)
 {
 	char *path;
 
@@ -1482,10 +1533,7 @@ remove_pn_file()
 }
 
 static void
-write_pseudonym(esp, inp, len, id)
-eap_state *esp;
-u_char *inp;
-int len, id;
+write_pseudonym(eap_state *esp, u_char *inp, int len, int id)
 {
 	u_char val;
 	u_char *datp, *digp;
@@ -1540,15 +1588,44 @@ int len, id;
 }
 #endif /* USE_SRP */
 
+#if CHAPMS
+/*
+ * Format and send an CHAPV2-Challenge EAP Response message.
+ */
+static void
+eap_chapv2_response(eap_state *esp, u_char id, u_char chapid, u_char *response, char *user, int user_len)
+{
+    u_char *outp;
+    int msglen;
+
+    outp = outpacket_buf;
+
+    MAKEHEADER(outp, PPP_EAP);
+
+    PUTCHAR(EAP_RESPONSE, outp);
+    PUTCHAR(id, outp);
+    esp->es_client.ea_id = id;
+    msglen = EAP_HEADERLEN + 6 * sizeof (u_char) + MS_CHAP2_RESPONSE_LEN + user_len;
+    PUTSHORT(msglen, outp);
+    PUTCHAR(EAPT_MSCHAPV2, outp);
+    PUTCHAR(CHAP_RESPONSE, outp);
+    PUTCHAR(chapid, outp);
+    PUTCHAR(0, outp);
+    /* len */
+    PUTCHAR(5 + user_len + MS_CHAP2_RESPONSE_LEN, outp);
+    BCOPY(response, outp, MS_CHAP2_RESPONSE_LEN+1); // VLEN + VALUE
+    INCPTR(MS_CHAP2_RESPONSE_LEN+1, outp);
+    BCOPY(user, outp, user_len);
+
+    output(esp->es_unit, outpacket_buf, PPP_HDRLEN + msglen);
+}
+#endif
+
 /*
  * eap_request - Receive EAP Request message (client mode).
  */
 static void
-eap_request(esp, inp, id, len)
-eap_state *esp;
-u_char *inp;
-int id;
-int len;
+eap_request(eap_state *esp, u_char *inp, int id, int len)
 {
 	u_char typenum;
 	u_char vallen;
@@ -1633,7 +1710,7 @@ int len;
 			esp->es_usedpseudo = 2;
 		}
 #endif /* USE_SRP */
-		eap_send_response(esp, id, typenum, esp->es_client.ea_name,
+		eap_send_response(esp, id, typenum, (u_char *)esp->es_client.ea_name,
 		    esp->es_client.ea_namelen);
 		break;
 
@@ -1730,7 +1807,7 @@ int len;
 				/* Init ssl session */
 				if(!eaptls_init_ssl_client(esp)) {
 					dbglog("cannot init ssl");
-					eap_send_nak(esp, id, EAPT_TLS);
+					eap_send_nak(esp, id, EAPT_MSCHAPV2);
 					esp->es_client.ea_using_eaptls = 0;
 					break;
 				}
@@ -1742,7 +1819,7 @@ int len;
 			}
 
 			/* The server has sent a bad start packet. */
-			eap_send_nak(esp, id, EAPT_TLS);
+			eap_send_nak(esp, id, EAPT_MSCHAPV2);
 			break;
 
 		case eapTlsRecvAck:
@@ -1786,7 +1863,7 @@ int len;
 			break;
 
 		default:
-			eap_send_nak(esp, id, EAPT_TLS);
+			eap_send_nak(esp, id, EAPT_MSCHAPV2);
 			esp->es_client.ea_using_eaptls = 0;
 			break;
 		}
@@ -2025,6 +2102,113 @@ int len;
 		}
 		break;
 #endif /* USE_SRP */
+    
+#ifdef CHAPMS
+        case EAPT_MSCHAPV2:
+	    if (len < 4) {
+		error("EAP: received invalid MSCHAPv2 packet, too short");
+		return;
+	    }
+	    unsigned char opcode;
+	    GETCHAR(opcode, inp);
+	    unsigned char chapid; /* Chapv2-ID */
+	    GETCHAR(chapid, inp);
+	    short mssize;
+	    GETSHORT(mssize, inp);
+
+	    /* Validate the mssize field */
+	    if (len != mssize) { 
+		error("EAP: received invalid MSCHAPv2 packet, invalid length");
+		return;
+	    }
+	    len -= 4;
+
+	    /* If MSCHAPv2 digest was not found, NAK the packet */
+	    if (!esp->es_client.digest) {
+		error("EAP MSCHAPv2 not supported");
+		eap_send_nak(esp, id, EAPT_SRP);
+		return;
+	    }
+
+	    switch (opcode) {
+	    case CHAP_CHALLENGE: {
+
+		/* make_response() expects: VLEN + VALUE */
+		u_char *challenge = inp;
+
+		unsigned char vsize;
+		GETCHAR(vsize, inp);
+                len -= 1;
+
+		/* Validate the VALUE field */
+                if (vsize != MS_CHAP2_PEER_CHAL_LEN || len < MS_CHAP2_PEER_CHAL_LEN) {
+                    error("EAP: received invalid MSCHAPv2 packet, invalid value-length: %d", vsize);
+                    return;
+                }
+
+		/* Increment past the VALUE field */
+		INCPTR(MS_CHAP2_PEER_CHAL_LEN, inp);
+		len -= MS_CHAP2_PEER_CHAL_LEN;
+
+		/* Extract the hostname */
+		rhostname[0] = '\0';
+		if (len > 0) {
+		    if (len >= sizeof (rhostname)) {
+			dbglog("EAP: trimming really long peer name down");
+			len = sizeof(rhostname) - 1;
+		    }
+		    BCOPY(inp, rhostname, len);
+		    rhostname[len] = '\0';
+		}
+
+		/* In case the remote doesn't give us his name. */
+		if (explicit_remote || (remote_name[0] != '\0' && len == 0))
+		    strlcpy(rhostname, remote_name, sizeof(rhostname));
+
+		/* Get the secret for authenticating ourselves with the specified host. */
+		if (!get_secret(esp->es_unit, esp->es_client.ea_name,
+		    rhostname, secret, &secret_len, 0)) {
+		    dbglog("EAP: no CHAP secret for auth to %q", rhostname);
+		    eap_send_nak(esp, id, EAPT_SRP);
+		    break;
+		}
+
+		/* Create the MSCHAPv2 response (and add to cache) */
+		unsigned char response[MS_CHAP2_RESPONSE_LEN+1]; // VLEN + VALUE
+		esp->es_client.digest->make_response(response, chapid, esp->es_client.ea_name,
+			challenge, secret, secret_len, NULL);
+
+		eap_chapv2_response(esp, id, chapid, response, esp->es_client.ea_name, esp->es_client.ea_namelen);
+		break;
+	    }
+	    case CHAP_SUCCESS: {
+
+		/* Check response for mutual authentication */
+		u_char status = CHAP_FAILURE;
+		if (esp->es_client.digest->check_success(chapid, inp, len) == 1) {
+		     info("Chap authentication succeeded! %.*v", len, inp);
+		     status = CHAP_SUCCESS;
+		}
+		eap_send_response(esp, id, EAPT_MSCHAPV2, &status, sizeof(status));
+		break;
+	    }
+	    case CHAP_FAILURE: {
+
+		/* Process the failure string, and log appropriate information */
+		esp->es_client.digest->handle_failure(inp, len);
+
+		u_char status = CHAP_FAILURE;
+		eap_send_response(esp, id, EAPT_MSCHAPV2, &status, sizeof(status));
+		goto client_failure; /* force termination */
+	    }
+	    default:
+
+                error("EAP: received invalid MSCHAPv2 packet, invalid or unsupported opcode: %d", opcode);
+		eap_send_nak(esp, id, EAPT_SRP);
+	    }
+
+	    break;
+#endif /* CHAPMS */
 
 	default:
 		info("EAP: unknown authentication type %d; Naking", typenum);
@@ -2039,13 +2223,13 @@ int len;
 	}
 	return;
 
-#ifdef USE_SRP
 client_failure:
 	esp->es_client.ea_state = eapBadAuth;
 	if (esp->es_client.ea_timeout > 0) {
 		UNTIMEOUT(eap_client_timeout, (void *)esp);
 	}
 	esp->es_client.ea_session = NULL;
+#ifdef USE_SRP
 	t_clientclose(tc);
 	auth_withpeer_fail(esp->es_unit, PPP_EAP);
 #endif /* USE_SRP */
@@ -2055,11 +2239,7 @@ client_failure:
  * eap_response - Receive EAP Response message (server mode).
  */
 static void
-eap_response(esp, inp, id, len)
-eap_state *esp;
-u_char *inp;
-int id;
-int len;
+eap_response(eap_state *esp, u_char *inp, int id, int len)
 {
 	u_char typenum;
 	u_char vallen;
@@ -2081,6 +2261,12 @@ int len;
 	struct eaptls_session *ets;
 	u_char flags;
 #endif /* USE_EAPTLS */
+#ifdef CHAPMS
+	u_char opcode;
+	int (*chap_verifier)(char *, char *, int, struct chap_digest_type *,
+		unsigned char *, unsigned char *, char *, int);
+	char response_message[256];
+#endif /* CHAPMS */
 
 	/*
 	 * Ignore responses if we're not open
@@ -2223,6 +2409,19 @@ int len;
 			break;
 #endif /* USE_EAPTLS */
 
+#ifdef CHAPMS
+		case EAPT_MSCHAPV2:
+			info("EAP: peer proposes MSCHAPv2");
+			/* If MSCHAPv2 digest was not found, NAK the packet */
+			if (!esp->es_server.digest) {
+				error("EAP MSCHAPv2 not supported");
+				eap_send_nak(esp, id, EAPT_SRP);
+				break;
+			}
+			esp->es_server.ea_state = eapMSCHAPv2Chall;
+			break;
+#endif /* CHAPMS */
+
 		default:
 			dbglog("EAP: peer requesting unknown Type %d", vallen);
 			switch (esp->es_server.ea_state) {
@@ -2303,6 +2502,111 @@ int len;
 		if (esp->es_rechallenge != 0)
 			TIMEOUT(eap_rechallenge, esp, esp->es_rechallenge);
 		break;
+
+#ifdef CHAPMS
+	case EAPT_MSCHAPV2:
+		if (len < 1) {
+			error("EAP: received MSCHAPv2 with no data");
+			eap_figure_next_state(esp, 1);
+			break;
+		}
+		GETCHAR(opcode, inp);
+		len--;
+
+		switch (opcode) {
+		case CHAP_RESPONSE:
+			if (esp->es_server.ea_state != eapMSCHAPv2Chall) {
+				error("EAP: unexpected MSCHAPv2-Response");
+				eap_figure_next_state(esp, 1);
+				break;
+			}
+			/* skip MS ID + len */
+			INCPTR(3, inp);
+			GETCHAR(vallen, inp);
+			len -= 4;
+
+			if (vallen != MS_CHAP2_RESPONSE_LEN || vallen > len) {
+				error("EAP: Invalid MSCHAPv2-Response "
+						"length %d", vallen);
+				eap_figure_next_state(esp, 1);
+				break;
+			}
+
+			/* Not so likely to happen. */
+			if (len - vallen >= sizeof (rhostname)) {
+				dbglog("EAP: trimming really long peer name down");
+				BCOPY(inp + vallen, rhostname, sizeof (rhostname) - 1);
+				rhostname[sizeof (rhostname) - 1] = '\0';
+			} else {
+				BCOPY(inp + vallen, rhostname, len - vallen);
+				rhostname[len - vallen] = '\0';
+			}
+
+			/* In case the remote doesn't give us his name. */
+			if (explicit_remote ||
+					(remote_name[0] != '\0' && vallen == len))
+				strlcpy(rhostname, remote_name, sizeof (rhostname));
+
+			/* strip the MS domain name */
+			if (chapms_strip_domain && strrchr(rhostname, '\\')) {
+				char tmp[MAXNAMELEN+1];
+
+				strcpy(tmp, strrchr(rhostname, '\\') + 1);
+				strcpy(rhostname, tmp);
+			}
+
+			if (chap_verify_hook)
+				chap_verifier = chap_verify_hook;
+			else
+				chap_verifier = eap_chap_verify_response;
+
+			esp->es_server.ea_id += 1;
+			if ((*chap_verifier)(rhostname,
+						esp->es_server.ea_name,
+						id,
+						esp->es_server.digest,
+						esp->es_challenge,
+						inp - 1,
+						response_message,
+						sizeof(response_message)))
+			{
+				info("EAP: MSCHAPv2 success for peer %q",
+						rhostname);
+				esp->es_server.ea_type = EAPT_MSCHAPV2;
+				eap_chapms2_send_request(esp,
+						esp->es_server.ea_id,
+						CHAP_SUCCESS,
+						esp->es_server.ea_id,
+						response_message,
+						strlen(response_message));
+				eap_figure_next_state(esp, 0);
+				if (esp->es_rechallenge != 0)
+					TIMEOUT(eap_rechallenge, esp, esp->es_rechallenge);
+			}
+			else {
+				warn("EAP: MSCHAPv2 failure for peer %q",
+						rhostname);
+				eap_chapms2_send_request(esp,
+						esp->es_server.ea_id,
+						CHAP_FAILURE,
+						esp->es_server.ea_id,
+						response_message,
+						strlen(response_message));
+			}
+			break;
+		case CHAP_SUCCESS:
+			info("EAP: MSCHAPv2 success confirmed");
+			break;
+		case CHAP_FAILURE:
+			info("EAP: MSCHAPv2 failure confirmed");
+			break;
+		default:
+			error("EAP: Unhandled MSCHAPv2 opcode %d", opcode);
+			eap_send_nak(esp, id, EAPT_SRP);
+		}
+
+		break;
+#endif /* CHAPMS */
 
 #ifdef USE_SRP
 	case EAPT_SRP:
@@ -2428,11 +2732,7 @@ int len;
  * eap_success - Receive EAP Success message (client mode).
  */
 static void
-eap_success(esp, inp, id, len)
-eap_state *esp;
-u_char *inp;
-int id;
-int len;
+eap_success(eap_state *esp, u_char *inp, int id, int len)
 {
 	if (esp->es_client.ea_state != eapOpen && !eap_client_active(esp)
 #ifdef USE_EAPTLS
@@ -2472,11 +2772,7 @@ int len;
  * eap_failure - Receive EAP Failure message (client mode).
  */
 static void
-eap_failure(esp, inp, id, len)
-eap_state *esp;
-u_char *inp;
-int id;
-int len;
+eap_failure(eap_state *esp, u_char *inp, int id, int len)
 {
 	/*
 	 * Ignore failure messages if we're not open
@@ -2509,10 +2805,7 @@ int len;
  * eap_input - Handle received EAP message.
  */
 static void
-eap_input(unit, inp, inlen)
-int unit;
-u_char *inp;
-int inlen;
+eap_input(int unit, u_char *inp, int inlen)
 {
 	eap_state *esp = &eap_states[unit];
 	u_char code, id;
@@ -2573,15 +2866,14 @@ static char *eap_typenames[] = {
 	"OTP", "Generic-Token", NULL, NULL,
 	"RSA", "DSS", "KEA", "KEA-Validate",
 	"TLS", "Defender", "Windows 2000", "Arcot",
-	"Cisco", "Nokia", "SRP"
+	"Cisco", "Nokia", "SRP", NULL,
+	"TTLS", "RAS", "AKA", "3COM", "PEAP",
+	"MSCHAPv2"
 };
 
 static int
-eap_printpkt(inp, inlen, printer, arg)
-u_char *inp;
-int inlen;
-void (*printer) __P((void *, char *, ...));
-void *arg;
+eap_printpkt(u_char *inp, int inlen,
+	     void (*printer) (void *, char *, ...), void *arg)
 {
 	int code, id, len, rtype, vallen;
 	u_char *pstart;
@@ -2589,6 +2881,9 @@ void *arg;
 #ifdef USE_EAPTLS
 	u_char flags;
 #endif /* USE_EAPTLS */
+#ifdef CHAPMS
+	u_char opcode;
+#endif /* CHAPMS */
 
 	if (inlen < EAP_HEADERLEN)
 		return (0);
@@ -2652,6 +2947,61 @@ void *arg;
 				printer(arg, " <No name>");
 			}
 			break;
+
+#ifdef CHAPMS
+		case EAPT_MSCHAPV2:
+			if (len <= 0)
+				break;
+			GETCHAR(opcode, inp);
+			len--;
+			switch (opcode) {
+			case CHAP_CHALLENGE:
+				INCPTR(3, inp);
+				len -= 3;
+				GETCHAR(vallen, inp);
+				len--;
+				if (vallen > len)
+					goto truncated;
+				len -= vallen;
+				printer(arg, " Challenge <");
+				for (; vallen > 0; --vallen) {
+					u_char val;
+					GETCHAR(val, inp);
+					printer(arg, "%.2x", val);
+				}
+				printer(arg, ">");
+				if (len > 0) {
+					printer(arg, ", <Name ");
+					print_string((char *)inp, len, printer, arg);
+					printer(arg, ">");
+					INCPTR(len, inp);
+					len = 0;
+				} else {
+					printer(arg, ", <No name>");
+				}
+				break;
+			case CHAP_SUCCESS:
+				INCPTR(3, inp);
+				len -= 3;
+				printer(arg, " Success <Message ");
+				print_string((char *)inp, len, printer, arg);
+				printer(arg, ">");
+				break;
+			case CHAP_FAILURE:
+				INCPTR(3, inp);
+				len -= 3;
+				printer(arg, " Failure <Message ");
+				print_string((char *)inp, len, printer, arg);
+				printer(arg, ">");
+				break;
+			default:
+				INCPTR(3, inp);
+				len -= 3;
+				printer(arg, " opcode=0x%x <%.*B>", opcode, len, inp);
+				break;
+			}
+			break;
+#endif /* CHAPMS */
 
 #ifdef USE_EAPTLS
 		case EAPT_TLS:
@@ -2810,7 +3160,7 @@ void *arg;
 			len--;
 			printer(arg, " <Suggested-type %02X", rtype);
 			if (rtype >= 1 &&
-			    rtype < sizeof (eap_typenames) / sizeof (char *))
+			    rtype <= sizeof (eap_typenames) / sizeof (char *))
 				printer(arg, " (%s)", eap_typenames[rtype-1]);
 			printer(arg, ">");
 			break;
@@ -2837,6 +3187,51 @@ void *arg;
 				printer(arg, " <No name>");
 			}
 			break;
+
+#ifdef CHAPMS
+		case EAPT_MSCHAPV2:
+			if (len <= 0)
+				break;
+			GETCHAR(opcode, inp);
+			len--;
+			switch (opcode) {
+			case CHAP_RESPONSE:
+				INCPTR(3, inp);
+				len -= 3;
+				GETCHAR(vallen, inp);
+				len--;
+				if (vallen > len)
+					goto truncated;
+				len -= vallen;
+				printer(arg, " Response <");
+				for (; vallen > 0; --vallen) {
+					u_char val;
+					GETCHAR(val, inp);
+					printer(arg, "%.2x", val);
+				}
+				printer(arg, ">");
+				if (len > 0) {
+					printer(arg, ", <Name ");
+					print_string((char *)inp, len, printer, arg);
+					printer(arg, ">");
+					INCPTR(len, inp);
+					len = 0;
+				} else {
+					printer(arg, ", <No name>");
+				}
+				break;
+			case CHAP_SUCCESS:
+				printer(arg, " Success");
+				break;
+			case CHAP_FAILURE:
+				printer(arg, " Failure");
+				break;
+			default:
+				printer(arg, " opcode=0x%x <%.*B>", opcode, len, inp);
+				break;
+			}
+			break;
+#endif /* CHAPMS */
 
 		case EAPT_SRP:
 			if (len < 1)

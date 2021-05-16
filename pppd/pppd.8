@@ -127,11 +127,10 @@ is no other default route with the same metric.  With the default
 value of -1, the route is only added if there is no default route at
 all.
 .TP
-.B defaultroute6
-Add a default IPv6 route to the system routing tables, using the peer as
-the gateway, when IPv6CP negotiation is successfully completed.
-This entry is removed when the PPP connection is broken.  This option
-is privileged if the \fInodefaultroute6\fR option has been specified.
+.B replacedefaultroute
+This option is a flag to the defaultroute option. If defaultroute is
+set and this flag is also set, pppd replaces an existing default route
+with the new default route.  This option is privileged.
 .TP
 .B disconnect \fIscript
 Execute the command specified by \fIscript\fR, by passing it to a
@@ -295,6 +294,15 @@ Set the maximum number of CHAP challenge transmissions to \fIn\fR
 Set the CHAP restart interval (retransmission timeout for challenges)
 to \fIn\fR seconds (default 3).
 .TP
+.B chap-timeout \fIn
+Set timeout for CHAP authentication by peer to \fIn\fR seconds (default 60).
+.TP
+.B chapms\-strip\-domain
+Some Windows 9x/ME clients might be transmitting the MS domain before the
+username in the provided client name. This option enables stripping the domain
+from the client name on the server side before matching it against the secret
+file.
+.TP
 .B child\-timeout \fIn
 When exiting, wait for up to \fIn\fR seconds for any child processes
 (such as the command specified with the \fBpty\fR command) to exit
@@ -339,6 +347,17 @@ escaped for both the transmit and the receive direction.
 Disable MRU [Maximum Receive Unit] negotiation.  With this option,
 pppd will use the default MRU value of 1500 bytes for both the
 transmit and receive direction.
+.TP
+.B defaultroute6
+Add a default IPv6 route to the system routing tables, using the peer as
+the gateway, when IPv6CP negotiation is successfully completed.
+This entry is removed when the PPP connection is broken.  This option
+is privileged if the \fInodefaultroute6\fR option has been specified.
+\fBWARNING: Do not enable this option by default\fR.  IPv6 routing tables
+are managed by kernel (as apposite to IPv4) and IPv6 default route is
+configured by kernel automatically too based on ICMPv6 Router Advertisement
+packets.  This option may conflict with kernel IPv6 route setup and should
+be used only for broken IPv6 networks.
 .TP
 .B deflate \fInr,nt
 Request that the peer compress packets that it sends, using the
@@ -478,6 +497,18 @@ to send configure-Rejects instead to \fIn\fR (default 10).
 .B ipcp\-max\-terminate \fIn
 Set the maximum number of IPCP terminate-request transmissions to
 \fIn\fR (default 3).
+.TP
+.B ipcp\-no\-address
+Disable negotiation of addresses via IP-Address IPCP option.
+.TP
+.B ipcp\-no\-addresses
+Disable negotiation of addresses via old-style deprecated IP-Addresses
+IPCP option. pppd by default try to use new-style IP-Address IPCP option.
+If new-style is not supported by peer or is disabled by \fBipcp\-no\-address\fR
+option then pppd fallbacks to old-style deprecated IP-Addresses IPCP option.
+When both new-style and old-style are disabled by both \fBipcp\-no\-address\fR
+and \fBipcp\-no\-addresses\fR options then negotiation of IP addresses
+is completely disabled.
 .TP
 .B ipcp\-restart \fIn
 Set the IPCP restart interval (retransmission timeout) to \fIn\fR
@@ -789,8 +820,12 @@ disable both forms of hardware flow control.
 .TP
 .B nodefaultroute
 Disable the \fIdefaultroute\fR option.  The system administrator who
-wishes to prevent users from creating default routes with pppd
+wishes to prevent users from adding a default route with pppd
 can do so by placing this option in the /etc/ppp/options file.
+.TP
+.B noreplacedefaultroute
+Disable the \fIreplacedefaultroute\fR option. This allows to disable a
+\fIreplacedefaultroute\fR option set previously in the configuration.
 .TP
 .B nodefaultroute6
 Disable the \fIdefaultroute6\fR option.  The system administrator who
@@ -905,6 +940,9 @@ not set the destination address of the ppp interface.  In this
 situation, the ppp interface can be used for routing by creating
 device routes, but the peer itself cannot be addressed directly for IP
 traffic.
+.TP
+.B nosendip
+Don't send our local IP address to peer during IP address negotiation.
 .TP
 .B notty
 Normally, pppd requires a terminal device.  With this option, pppd
@@ -1199,6 +1237,49 @@ overridden by a non-privileged user.
 .B xonxoff
 Use software flow control (i.e. XON/XOFF) to control the flow of data on
 the serial port.
+.SH PPPOE OPTIONS
+To establish PPP link over Ethernet (PPPoE) it is needed to load pppd's
+\fBplugin pppoe.so\fR and then specify option \fBnic-\fIinterface\fR
+instead of modem options \fIttyname\fR and \fIspeed\fR.
+Recognized pppd's PPPoE options are:
+.TP
+.B nic-\fIinterface
+Use the ethernet device \fIinterface\fR to communicate with the peer.
+For example, establishing PPPoE link on \fIeth0\fR interface is done
+by specifying ppp'd option \fBnic-eth0\fR. Prefix \fBnic-\fR for this
+option may be avoided if interface name is unambiguous and does not
+look like any other pppd's option.
+.TP
+.B pppoe-service \fIname
+Connect to specified PPPoE service name. For backward compatibility also
+\fBrp_pppoe_service\fP option name is supported.
+.TP
+.B pppoe-ac \fIname
+Connect to specified PPPoE access concentrator name. For backward
+compatibility also \fBrp_pppoe_ac\fP option name is supported.
+.TP
+.B pppoe-sess \fIsessid\fP:\fImacaddr
+Attach to existing PPPoE session. For backward compatibility also
+\fBrp_pppoe_sess\fP option name is supported.
+.TP
+.B pppoe-verbose \fIn
+Be verbose about discovered access concentrators. For backward
+compatibility also \fBrp_pppoe_verbose\fP option name is supported.
+.TP
+.B pppoe-mac \fImacaddr
+Connect to specified MAC address.
+.TP
+.B pppoe-host-uniq \fIstring
+Set the PPPoE Host-Uniq tag to the supplied hex string.
+By default PPPoE Host-Uniq tag is set to the pppd's process PID.
+For backward compatibility this option may be specified without
+\fBpppoe-\fP prefix.
+.TP
+.B pppoe-padi-timeout \fIn
+Initial timeout for discovery packets in seconds (default 5).
+.TP
+.B pppoe-padi-attempts \fIn
+Number of discovery attempts (default 3).
 .SH OPTIONS FILES
 Options can be taken from files as well as the command line.  Pppd
 reads options from the files /etc/ppp/options, ~/.ppprc and
@@ -1689,6 +1770,14 @@ IPCP has come up.
 The IP address for the remote end of the link.  This is only set when
 IPCP has come up.
 .TP
+.B LLLOCAL
+The Link-Local IPv6 address for the local end of the link.  This is only
+set when IPV6CP has come up.
+.TP
+.B LLREMOTE
+The Link-Local IPv6 address for the remote end of the link.  This is only
+set when IPV6CP has come up.
+.TP
 .B PEERNAME
 The authenticated name of the peer.  This is only set if the peer
 authenticates itself.
@@ -1719,6 +1808,9 @@ the connection.
 .TP
 .B LINKNAME
 The logical name of the link, set with the \fIlinkname\fR option.
+.TP
+.B CALL_FILE
+The value of the \fIcall\fR option.
 .TP
 .B DNS1
 If the peer supplies DNS server addresses, this variable is set to the
